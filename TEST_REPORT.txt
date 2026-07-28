@@ -1,0 +1,19 @@
+Baseball Life patched build test
+
+Applied:
+- Original master UI/code
+- Patch v0.4 appended to SYSTEM_PROMPT_CORE
+- Patch v0.5 condition system appended to SYSTEM_PROMPT_CORE
+- Existing leaderboard TypeScript typing issue fixed with LeaderboardItem[] cast
+
+Validation:
+- TypeScript syntax/type structure check: PASS (using local module stubs)
+- Full Vite dependency install/build: NOT COMPLETED because this environment could not download npm packages within the allowed time.
+- Gemini API gameplay call: NOT TESTED because no user API key is available and the current hard-coded model may need updating.
+
+Files:
+- index.html
+- index.tsx
+- package.json
+- tsconfig.json
+- vite.config.ts
