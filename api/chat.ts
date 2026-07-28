@@ -19,7 +19,7 @@ export default async function handler(req: any, res: any) {
     const client = new OpenAI({ apiKey });
     const input = [
       { role: 'developer', content: String(systemPrompt || '') },
-      ...history.map((item: any) => ({
+      ...history.slice(-12).map((item: any) => ({
         role: item.role === 'model' ? 'assistant' : 'user',
         content: String(item.text || '')
       })),

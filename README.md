@@ -1,10 +1,23 @@
-# Baseball Life OpenAI Edition
+# Baseball Life OpenAI v1.1
 
-Gemini 기반 원본을 OpenAI API 기반으로 변환한 야구 커리어 시뮬레이터입니다.
+React + Vite 기반 AI 야구 커리어 시뮬레이터입니다.
 
-## Vercel 환경 변수
+## 실행
 
-- `OPENAI_API_KEY`: OpenAI API 키
-- `OPENAI_MODEL`: 선택 사항. 기본값 `gpt-5-mini`
+```bash
+npm install
+npm run dev
+```
 
-API 키는 브라우저에 노출되지 않고 `/api/chat` 서버리스 함수에서만 사용됩니다.
+## Vercel 환경변수
+
+- `OPENAI_API_KEY`: OpenAI Platform API 키
+- `OPENAI_MODEL`: 선택 사항. 미설정 시 `gpt-5-mini`
+
+## v1.1 핵심 변경
+
+- 자동저장 없음
+- 수동 저장 슬롯 3개
+- 기존 저장 데이터 이전
+- 최근 대화 12개만 API 전달
+- 현재 게임 상태를 AI 프롬프트에 포함

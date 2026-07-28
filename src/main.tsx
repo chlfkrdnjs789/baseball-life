@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
+import SaveSlotsModal from './components/SaveSlotsModal';
+import { buildAIHistory, buildGameStateContext } from './services/aiContext';
+import { deleteSlot, listSaveSlots, loadFromSlot, migrateLegacySave, saveToSlot } from './services/saveService';
+import type { SaveMetadata, SaveSlotNumber } from './models/saveGame';
 import { 
   Smartphone, 
   MessageSquare, 
@@ -349,6 +353,16 @@ interface ChatMessage {
   timestamp: number;
 }
 
+interface GameSavePayload {
+  chatHistory: ChatMessage[];
+  dashboardData: DashboardData | null;
+  selectedRoute: RouteType | null;
+  difficulty: DifficultyType;
+  playerForm: PlayerFormData;
+  currentView: ViewMode;
+  recordTab: 'SEASON' | 'YEARLY' | 'CAREER';
+}
+
 // Game Creation Types
 type GameStage = 'START' | 'ROUTE_SELECT' | 'DIFFICULTY_SELECT' | 'PLAYER_FORM' | 'GAME';
 type RouteType = 'HIGHSCHOOL_2024' | 'PRO_2026';
@@ -399,6 +413,8 @@ const App = () => {
   
   // Records View Tab State
   const [recordTab, setRecordTab] = useState<'SEASON' | 'YEARLY' | 'CAREER'>('SEASON');
+  const [saveModalMode, setSaveModalMode] = useState<'save' | 'load' | null>(null);
+  const [saveSlots, setSaveSlots] = useState<Array<SaveMetadata | null>>([null, null, null]);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -412,6 +428,16 @@ const App = () => {
     scrollToBottom();
   }, [chatHistory, isLoading, currentView]);
 
+  useEffect(() => {
+    migrateLegacySave<any>((legacy) => ({
+      playerName: legacy?.dashboardData?.status?.name || '이름 미상',
+      team: legacy?.dashboardData?.status?.team || '-',
+      position: legacy?.dashboardData?.status?.position || '-',
+      date: legacy?.dashboardData?.date || '-',
+      ovr: legacy?.dashboardData?.status?.ovr || '-',
+    }));
+    setSaveSlots(listSaveSlots());
+  }, []);
 
 
   const handleInitialStart = () => {
@@ -491,30 +517,69 @@ const App = () => {
     await sendMessage(initialPrompt, true);
   };
 
-  const handleLoadGame = () => {
-    const saved = localStorage.getItem('baseball_save_v2');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setChatHistory(parsed.chatHistory);
-        setDashboardData(parsed.dashboardData);
-        setGameStage('GAME');
-      } catch (e) {
-        alert("세이브 파일이 손상되었습니다.");
-      }
-    } else {
-      alert("저장된 게임이 없습니다.");
-    }
+  const refreshSaveSlots = () => setSaveSlots(listSaveSlots());
+
+  const buildSavePayload = (): GameSavePayload => ({
+    chatHistory,
+    dashboardData,
+    selectedRoute,
+    difficulty,
+    playerForm,
+    currentView,
+    recordTab,
+  });
+
+  const openSaveModal = (mode: 'save' | 'load') => {
+    refreshSaveSlots();
+    setSaveModalMode(mode);
   };
 
-  const handleSaveGame = () => {
-    const saveObj = {
-      chatHistory,
-      dashboardData,
-      savedAt: new Date().toISOString()
-    };
-    localStorage.setItem('baseball_save_v2', JSON.stringify(saveObj));
-    alert("게임이 저장되었습니다.");
+  const handleSaveSlot = (slot: SaveSlotNumber) => {
+    if (!dashboardData) {
+      alert('저장할 게임이 없습니다.');
+      return;
+    }
+
+    const existing = saveSlots[slot - 1];
+    if (existing && !confirm(`저장 슬롯 ${slot}을 덮어쓰시겠습니까?`)) return;
+
+    saveToSlot(slot, buildSavePayload(), {
+      playerName: dashboardData.status.name || playerForm.name || '이름 미상',
+      team: dashboardData.status.team || '-',
+      position: dashboardData.status.position || playerForm.position,
+      date: dashboardData.date || '-',
+      ovr: dashboardData.status.ovr || '-',
+    });
+
+    refreshSaveSlots();
+    setSaveModalMode(null);
+    alert(`저장 슬롯 ${slot}에 저장했습니다.`);
+  };
+
+  const handleLoadSlot = (slot: SaveSlotNumber) => {
+    const envelope = loadFromSlot<GameSavePayload>(slot);
+    if (!envelope) {
+      alert('저장 데이터를 읽을 수 없습니다.');
+      refreshSaveSlots();
+      return;
+    }
+
+    const game = envelope.game;
+    setChatHistory(Array.isArray(game.chatHistory) ? game.chatHistory : []);
+    setDashboardData(game.dashboardData ?? null);
+    setSelectedRoute(game.selectedRoute ?? null);
+    setDifficulty(game.difficulty ?? '보통');
+    setPlayerForm(game.playerForm ?? playerForm);
+    setCurrentView(game.currentView ?? 'CHAT');
+    setRecordTab(game.recordTab ?? 'SEASON');
+    setGameStage('GAME');
+    setSaveModalMode(null);
+  };
+
+  const handleDeleteSlot = (slot: SaveSlotNumber) => {
+    if (!confirm(`저장 슬롯 ${slot}을 삭제하시겠습니까?`)) return;
+    deleteSlot(slot);
+    refreshSaveSlots();
   };
 
   const parseResponse = (text: string) => {
@@ -562,8 +627,8 @@ const App = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          systemPrompt: SYSTEM_PROMPT_CORE,
-          history: newHistory,
+          systemPrompt: SYSTEM_PROMPT_CORE + buildGameStateContext(dashboardData),
+          history: buildAIHistory(newHistory),
           message: text
         })
       });
@@ -596,6 +661,16 @@ const App = () => {
 
   if (gameStage === 'START') {
     return (
+      <>
+      {saveModalMode === 'load' && (
+        <SaveSlotsModal
+          mode="load"
+          slots={saveSlots}
+          onSelect={handleLoadSlot}
+          onDelete={handleDeleteSlot}
+          onClose={() => setSaveModalMode(null)}
+        />
+      )}
 <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white bg-[url('https://images.unsplash.com/photo-1516731537543-b4aa4eb6a3da?q=80&w=2541&auto=format&fit=crop')] bg-cover bg-center bg-blend-multiply py-10 overflow-y-auto">
         <div className="bg-black/70 p-12 rounded-2xl backdrop-blur-sm border border-slate-700 text-center shadow-2xl animate-in zoom-in duration-300 max-w-lg w-full mx-4">
           <h1 className="text-5xl font-extrabold mb-2 text-green-400 font-mono tracking-tighter drop-shadow-lg">BASEBALL LIFE</h1>
@@ -605,13 +680,14 @@ const App = () => {
             <button onClick={handleInitialStart} className="px-6 py-4 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold transition flex items-center justify-center gap-3 shadow-lg hover:translate-y-[-2px]">
               <Power size={20} /> 새로 시작하기
             </button>
-            <button onClick={handleLoadGame} className="px-6 py-4 bg-slate-700 hover:bg-slate-600 text-gray-200 rounded-lg font-bold transition flex items-center justify-center gap-3 shadow-lg hover:translate-y-[-2px]">
+            <button onClick={() => openSaveModal('load')} className="px-6 py-4 bg-slate-700 hover:bg-slate-600 text-gray-200 rounded-lg font-bold transition flex items-center justify-center gap-3 shadow-lg hover:translate-y-[-2px]">
               <Save size={20} /> 이어하기
             </button>
           </div>
         </div>
-        <div className="mt-8 text-xs text-gray-500 font-mono">Powered by Gemini 2.5 Flash</div>
+        <div className="mt-8 text-xs text-gray-500 font-mono">Powered by OpenAI</div>
       </div>
+      </>
     );
   }
 
@@ -760,6 +836,16 @@ const App = () => {
   // --- GAME DASHBOARD UI ---
 
   return (
+    <>
+      {saveModalMode === 'save' && (
+        <SaveSlotsModal
+          mode="save"
+          slots={saveSlots}
+          onSelect={handleSaveSlot}
+          onDelete={handleDeleteSlot}
+          onClose={() => setSaveModalMode(null)}
+        />
+      )}
     <div className="flex h-[100dvh] bg-[#0f172a] text-gray-100 font-sans overflow-hidden">
       {/* LEFT SIDEBAR */}
       <div className="hidden md:flex w-80 bg-slate-900 border-r border-slate-800 flex-col shadow-xl z-10 shrink-0">
@@ -819,7 +905,7 @@ const App = () => {
           </div>
         </div>
         <div className="p-4 bg-slate-950 border-t border-slate-800 grid grid-cols-2 gap-2">
-            <button onClick={handleSaveGame} className="flex items-center justify-center gap-2 py-2 bg-slate-800 hover:bg-slate-700 rounded text-xs text-gray-300 border border-slate-700"><Save size={14} /> 저장하기</button>
+            <button onClick={() => openSaveModal('save')} className="flex items-center justify-center gap-2 py-2 bg-slate-800 hover:bg-slate-700 rounded text-xs text-gray-300 border border-slate-700"><Save size={14} /> 저장하기</button>
             <button onClick={() => confirm("종료하시겠습니까?") && setGameStage('START')} className="flex items-center justify-center gap-2 py-2 bg-red-900/30 hover:bg-red-900/50 rounded text-xs text-red-300 border border-red-900/30"><Power size={14} /> 종료</button>
         </div>
       </div>
@@ -1085,7 +1171,7 @@ const App = () => {
                        {dashboardData?.league_data?.leaderboards && Object.entries(dashboardData.league_data.leaderboards).map(([key, list]) => (
                          <div key={key} className="bg-slate-900/50 rounded-lg p-3">
                            <div className="text-xs font-bold text-green-400 uppercase mb-2 border-b border-slate-700 pb-1">{key}</div>
-                           {list.map((p, idx) => (
+                           {(list as LeaderboardItem[]).map((p, idx) => (
                              <div key={idx} className="flex justify-between text-xs py-1">
                                <span className="text-gray-300 w-4 font-mono">{idx+1}</span>
                                <span className={`flex-1 ${p.name.includes(playerForm.name) ? 'text-yellow-300 font-bold' : 'text-gray-400'}`}>{p.name} <span className="text-[10px] text-gray-600">({p.team})</span></span>
@@ -1181,6 +1267,7 @@ const App = () => {
         </div>
       )}
     </div>
+    </>
   );
 };
 
